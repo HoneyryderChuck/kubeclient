@@ -12,22 +12,24 @@ module Kubeclient
         @headers = options[:headers]
         @options[:http_max_redirects] ||= Kubeclient::Client::DEFAULT_HTTP_MAX_REDIRECTS
         @formatter = formatter
-
-        @faraday_client = build_client
+        @faraday_client = nil
       end
 
       def each
         @finished = false
         buffer = +''
 
+        @faraday_client = build_client
         begin
-          @faraday_client.get('', nil, @headers) do |request|
-            request.options.on_data = proc do |chunk|
-              buffer << chunk
-              while (line = buffer.slice!(/.+\n/))
-                yield(@formatter.call(line.chomp))
+          catch(:kubeclient_watch_stop) do
+            @faraday_client.get('', nil, @headers) do |request|
+              request.options.on_data = proc do |chunk|
+                buffer << chunk
+                while (line = buffer.slice!(/.+\n/))
+                  yield(@formatter.call(line.chomp))
+                end
+                throw(:kubeclient_watch_stop) if @finished
               end
-              next if @finished
             end
           end
         rescue Faraday::Error => e
@@ -40,6 +42,7 @@ module Kubeclient
 
       def finish
         @finished = true
+        @faraday_client&.close
       end
 
       private
